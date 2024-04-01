@@ -12,8 +12,8 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, default='images')
-    parser.add_argument('--output_dir', type=str, default='vision_features')
-    parser.add_argument('--img_type', type=str, default="vit", choices=['detr', 'vit'], help='type of image features')
+    parser.add_argument('--output_dir', type=str, default='vision_features_test')
+    parser.add_argument('--img_type', type=str, default="detr", choices=['detr', 'vit'], help='type of image features')
     args = parser.parse_args()
     return args
 
@@ -43,16 +43,18 @@ if __name__ == '__main__':
     args = parse_args()
     print("args",args)
     all_images = os.listdir(args.data_root)
+    print(len(all_images))
     tmp = []
     name_map = {}
     all_images.sort(key=lambda x:int(x))
-    print(len(all_images))
     if args.img_type == "vit":
         vit_model = timm.create_model("vit_large_patch32_384", pretrained=True, num_classes=0)
         vit_model.eval()
     elif args.img_type == "detr":
         detr_model = torch.hub.load('cooelf/detr', 'detr_resnet101_dc5', pretrained=True)
         detr_model.eval()
+    elif args.img_type == "region_clip":
+        pass
     for idx, image in enumerate(tqdm(all_images)):
         if idx % 100 == 0: print(idx)
         if os.path.exists(os.path.join(args.data_root, image, "image.png")):
@@ -60,6 +62,7 @@ if __name__ == '__main__':
         else:
             curr_dir = os.path.join(args.data_root, image, "choice_0.png")
         feature = extract_features(args.img_type, curr_dir)
+        print(feature.shape)
         tmp.append(feature.detach().cpu())
         name_map[str(image)] = idx
     
