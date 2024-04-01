@@ -20,7 +20,7 @@ import evaluate
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_root', type=str, default='G:/LLM/')
+    parser.add_argument('--data_root', type=str, default='data')
     parser.add_argument('--output_dir', type=str, default='experiments')
     parser.add_argument('--model', type=str, default='allenai/unifiedqa-t5-base')
     parser.add_argument('--options', type=list, default=["A", "B", "C", "D", "E"])
@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument('--img_type', type=str, default="detr", choices=['detr', 'clip', 'resnet','vit'], help='type of image features')
     parser.add_argument('--eval_le', type=str, default=None, help='generated rationale for the dev set')
     parser.add_argument('--test_le', type=str, default=None, help='generated rationale for the test set')
-    parser.add_argument('--evaluate_dir', type=str, default="G:/LLM/ScienceQA/", help='the directory of model for evaluation')
+    parser.add_argument('--evaluate_dir', type=str, default="data/scienceqa/", help='the directory of model for evaluation')
     parser.add_argument('--caption_file', type=str, default='data/instruct_captions.json')
     parser.add_argument('--use_caption', action='store_true', help='use image captions or not')
     parser.add_argument('--prompt_format', type=str, default='QCM-A', help='prompt format template',
@@ -63,8 +63,8 @@ def T5Trainer(
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
-    console.log(f"""[Model]: Loading {args.model}...\n""")
-    console.log(f"[Data]: Reading data...\n")
+    # console.log(f"""[Model]: Loading {args.model}...\n""")
+    # console.log(f"[Data]: Reading data...\n")
     problems = dataframe['problems']
     qids = dataframe['qids']
     train_qids = qids['train']
