@@ -38,10 +38,10 @@ def parse_args():
     parser.add_argument('--use_generate', action='store_true', help='only for baseline to improve inference speed')
     parser.add_argument('--final_eval', action='store_true', help='only evaluate the model at the final epoch')
     parser.add_argument('--user_msg', type=str, default="baseline", help='experiment type in the save_dir')
-    parser.add_argument('--img_type', type=str, default="detr", choices=['detr', 'clip', 'resnet','vit'], help='type of image features')
+    parser.add_argument('--img_type', type=str, default="detr", choices=['detr', 'clip', 'resnet','vit', 'region_clip'], help='type of image features')
     parser.add_argument('--eval_le', type=str, default=None, help='generated rationale for the dev set')
     parser.add_argument('--test_le', type=str, default=None, help='generated rationale for the test set')
-    parser.add_argument('--evaluate_dir', type=str, default="G:/LLM/ScienceQA/", help='the directory of model for evaluation')
+    parser.add_argument('--evaluate_dir', type=str, default=None, help='the directory of model for evaluation')
     parser.add_argument('--caption_file', type=str, default='data/instruct_captions.json')
     parser.add_argument('--use_caption', action='store_true', help='use image captions or not')
     parser.add_argument('--prompt_format', type=str, default='QCM-A', help='prompt format template',
@@ -76,14 +76,16 @@ def T5Trainer(
     else:
         model_name = args.model.replace("/","-")
         gpu_count = torch.cuda.device_count()
-        save_dir = f"{args.output_dir}/{args.user_msg}_{model_name}_{args.img_type}_{args.prompt_format}_lr{args.lr}_bs{args.bs * gpu_count}_op{args.output_len}_ep{args.epoch}"
+        save_dir = f"{args.output_dir}/{args.model.split('/')[-1]}_ep{args.epoch}"
         if not os.path.exists(save_dir):
             os.mkdir(save_dir)
+    with open(os.path.join(save_dir, "run_args.json"), 'w') as f:
+        f.write(json.dumps(vars(args), indent=2, sort_keys=False))
     print(save_dir)
 
     if args.img_type is not None:
         patch_size = img_shape[args.img_type]
-        model = T5ForMultimodalGeneration.from_pretrained(args.model, patch_size=patch_size) 
+        model = T5ForMultimodalGeneration.from_pretrained(args.model, patch_size=patch_size)
         name_maps = dataframe['name_maps'] 
         image_features = dataframe['image_features']
         train_set = ScienceQADatasetImg(
@@ -170,6 +172,7 @@ def T5Trainer(
             preds = eval_preds.predictions[0]
             targets = eval_preds.label_ids
             preds = preds.argmax(axis=2)
+        preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
         preds = tokenizer.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         targets = tokenizer.batch_decode(targets, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         correct = 0
@@ -180,7 +183,7 @@ def T5Trainer(
             extract_pred = extract_ans(pred)
             best_option = extract_pred
             if reference == best_option:
-                correct +=1 
+                correct +=1
         return {'accuracy': 1.0*correct/len(targets)}
     
     # rougel for rationale generation
@@ -201,6 +204,7 @@ def T5Trainer(
             preds = eval_preds.predictions[0]
             targets = eval_preds.label_ids
             preds = preds.argmax(axis=2)
+        preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
         preds = tokenizer.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         targets = tokenizer.batch_decode(targets, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
@@ -266,14 +270,16 @@ def T5Trainer(
     )
 
     if args.evaluate_dir is None:
+        print("train:")
         trainer.train()
         trainer.save_model(save_dir)
-        
-    metrics = trainer.evaluate(eval_dataset = test_set, max_length=args.output_len)
-    trainer.log_metrics("test", metrics)
-    trainer.save_metrics("test", metrics)
 
-    predict_results = trainer.predict(test_dataset=test_set, max_length=args.output_len) 
+    # print("evaluate:")
+    # metrics = trainer.evaluate(eval_dataset = test_set, max_length=args.output_len)
+    # trainer.log_metrics("test", metrics)
+    # trainer.save_metrics("test", metrics)
+    print("predict:")
+    predict_results = trainer.predict(test_dataset=test_set, max_length=args.output_len)
     if trainer.is_world_process_zero():
         if args.use_generate:
             preds, targets = predict_results.predictions, predict_results.label_ids
@@ -281,7 +287,7 @@ def T5Trainer(
             preds = predict_results.predictions[0]
             targets = predict_results.label_ids
             preds = preds.argmax(axis=2)
-
+        preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
         preds = tokenizer.batch_decode(
             preds, skip_special_tokens=True, clean_up_tokenization_spaces=True
         )
@@ -292,7 +298,7 @@ def T5Trainer(
         results_ans = {}
         results_rationale = {}
         results_reference = {}
-        
+
         num_fail = 0
         for idx, qid in enumerate(test_qids):
             pred = preds[int(idx)]
@@ -309,43 +315,50 @@ def T5Trainer(
             results_ans[str(qid)] = extract_pred
             results_rationale[str(qid)] = pred
             results_reference[str(qid)] = ref
-
+        # print(results_rationale)
+        print("\tcompute scores:")
         scores = get_scores(results_ans, results_rationale, results_reference, os.path.join(args.data_root, "scienceqa/problems.json"))
         preds = [pred.strip() for pred in preds]
         output_data = {
                 "num_fail": num_fail,
                 "scores": scores,
+                "problems": [problems[qid] for qid in test_qids],
                 "preds": preds,
                  "labels": targets}
         output_prediction_file = os.path.join(save_dir,"predictions_ans_test.json")
+        print(f"write to file: {output_prediction_file}")
         with open(output_prediction_file, "w") as writer:
             writer.write(json.dumps(output_data, indent=4))
-    
-    # generate the rationale for the eval set
-    if args.prompt_format == "QCM-LE" or args.prompt_format == "QCM-E":
-        torch.cuda.empty_cache()
-        del predict_results, preds, targets
-        predict_results = trainer.predict(test_dataset=eval_set, max_length=args.output_len) 
-        if trainer.is_world_process_zero():
-            if args.use_generate:
-                preds, targets = predict_results.predictions, predict_results.label_ids
-            else:
-                preds = predict_results.predictions[0]
-                targets = predict_results.label_ids
-                preds = preds.argmax(axis=2)
 
-            preds = tokenizer.batch_decode(
-                preds, skip_special_tokens=True, clean_up_tokenization_spaces=True
-            )
-            targets = tokenizer.batch_decode(
-                targets, skip_special_tokens=True, clean_up_tokenization_spaces=True
-            )
-            preds = [pred.strip() for pred in preds]
-            output_data = {"preds": preds,
-                 "labels": targets}
-            output_prediction_file = os.path.join(save_dir,"predictions_ans_eval.json")
-            with open(output_prediction_file, "w") as writer:
-                writer.write(json.dumps(output_data, indent=4))
+    # generate the rationale for the eval set
+    # if args.prompt_format == "QCM-LE" or args.prompt_format == "QCM-E":
+    #     torch.cuda.empty_cache()
+    #     del predict_results, preds, targets
+    #     print("generate rationale:")
+    #     predict_results = trainer.predict(test_dataset=eval_set, max_length=args.output_len)
+    #     if trainer.is_world_process_zero():
+    #         if args.use_generate:
+    #             preds, targets = predict_results.predictions, predict_results.label_ids
+    #         else:
+    #             preds = predict_results.predictions[0]
+    #             targets = predict_results.label_ids
+    #             preds = preds.argmax(axis=2)
+    #         preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
+    #         preds = tokenizer.batch_decode(
+    #             preds, skip_special_tokens=True, clean_up_tokenization_spaces=True
+    #         )
+    #         targets = tokenizer.batch_decode(
+    #             targets, skip_special_tokens=True, clean_up_tokenization_spaces=True
+    #         )
+    #         preds = [pred.strip() for pred in preds]
+    #         output_data = {
+    #             "problems": [problems[qid] for qid in val_qids],
+    #             "preds": preds,
+    #             "labels": targets}
+    #         output_prediction_file = os.path.join(save_dir,"predictions_ans_eval.json")
+    #         print(f"write to file: {output_prediction_file}")
+    #         with open(output_prediction_file, "w") as writer:
+    #             writer.write(json.dumps(output_data, indent=4))
     
 
 if __name__ == '__main__':

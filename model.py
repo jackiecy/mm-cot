@@ -31,6 +31,8 @@ class JointEncoder(T5Stack):
         self.patch_num, self.patch_dim = patch_size
         self.image_dense = nn.Linear(self.patch_dim, config.d_model)
         self.mha_layer = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+        # self.mha_layer1 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+        # self.mha_layer2 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
         self.gate_dense = nn.Linear(2*config.hidden_size, config.hidden_size)
         self.sigmoid = nn.Sigmoid()
 
@@ -288,8 +290,10 @@ class JointEncoder(T5Stack):
         
         image_embedding = self.image_dense(image_ids)
 
+        # text_att, _ = self.mha_layer(hidden_states, hidden_states, hidden_states)
         image_att, _ = self.mha_layer(hidden_states, image_embedding, image_embedding)
-        
+        # image_att, _ = self.mha_layer2(image_att, image_embedding, image_embedding)
+
         merge = torch.cat([hidden_states, image_att], dim=-1)
         gate = self.sigmoid(self.gate_dense(merge))
         hidden_states = (1 - gate) * hidden_states + gate * image_att
@@ -328,9 +332,8 @@ class T5ForMultimodalGeneration(T5ForConditionalGeneration):
     def __init__(self, config: T5Config, patch_size):
         super().__init__(config)
         self.model_dim = config.d_model
-
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
-
+        # self.tokenizer = tokenizer
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
@@ -452,11 +455,15 @@ class T5ForMultimodalGeneration(T5ForConditionalGeneration):
             sequence_output = sequence_output * (self.model_dim**-0.5)
 
         lm_logits = self.lm_head(sequence_output)
-
+        # preds = self.tokenizer.batch_decode(
+        #     lm_logits, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        # )
         loss = None
         if labels is not None:
+            # fct = torch.nn.L1Loss()
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            # loss += fct(torch.argmax(lm_logits, dim=-1), labels)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
         if not return_dict:

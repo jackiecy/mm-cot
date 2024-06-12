@@ -9,6 +9,7 @@ from utils_prompt import *
 img_shape = {
     "resnet": (512, 2048),
     "clip": (49, 2048),
+    "region_clip": (100, 1024),
     "detr": (100, 256),
     "vit": (145, 1024),
 }
@@ -48,6 +49,8 @@ def load_data_img(args):
         image_features = np.load('vision_features/detr.npy')
     elif args.img_type == "vit":
         image_features = torch.load("vision_features/vit.pth")
+    elif args.img_type == "region_clip":
+        image_features = torch.load("vision_features/region_clip.pth")
     else:
         image_features = np.load('vision_features/detr.npy')
     print("img_features size: ", image_features.shape)

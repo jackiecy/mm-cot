@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, default='images')
     parser.add_argument('--output_dir', type=str, default='vision_features_test')
-    parser.add_argument('--img_type', type=str, default="detr", choices=['detr', 'vit'], help='type of image features')
+    parser.add_argument('--img_type', type=str, default="vit", choices=['detr', 'vit'], help='type of image features')
     args = parser.parse_args()
     return args
 

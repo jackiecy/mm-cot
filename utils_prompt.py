@@ -101,9 +101,9 @@ def create_one_example(format, question, context, choice, answer, lecture, solut
         output = f"Answer: The answer is {answer}."
 
     elif output_format == 'AL':
-        output = f"Answer: The answer is {answer}. BECAUSE: {solution}"
-    elif output_format == 'AE':
         output = f"Answer: The answer is {answer}. BECAUSE: {lecture}"
+    elif output_format == 'AE':
+        output = f"Answer: The answer is {answer}. BECAUSE: {solution}"
     elif output_format == 'ALE':
         output = f"Answer: The answer is {answer}. BECAUSE: {lecture} {solution}"
     elif output_format == 'AEL':
@@ -205,7 +205,7 @@ def build_train_pair(problems, test_qid, args, curr_le_data=None):
     solution = get_solution_text(problems[test_qid])
     answer_option = get_answer(problems[test_qid], args.options)
     answer = "(" + answer_option + ")"
-    
+
     test_example, target = create_one_example(args.prompt_format,
                                       question,
                                       context,

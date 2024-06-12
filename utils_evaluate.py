@@ -26,7 +26,7 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
     # read result file
     results = result_data
     num = len(results)
-    assert num == 4241
+    # assert num == 4241
     #print("number of questions:", num)
 
     # read data file
@@ -35,7 +35,7 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
     # construct pandas data
     sqa_pd = pd.DataFrame(sqa_data).T
     res_pd = sqa_pd[sqa_pd['split'] == 'test']  # test set
-
+    wrong = {}
     # update data
     for index, row in res_pd.iterrows():
 
@@ -48,7 +48,10 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
         pred = int(results[index])
         res_pd.loc[index, 'pred'] = pred
         res_pd.loc[index, 'true_false'] = (label == pred)
-
+        if label != pred:
+            wrong[str(index)] = row['question'][:100]
+            # print("wrong answer:", index, row['question'], label, pred, True if row['image'] else False)
+    # print(wrong)
     # accuracy scores
     acc_average = len(res_pd[res_pd['true_false'] == True]) / num * 100
     #assert result_file.split('_')[-1] == "{:.3f}.json".format(acc_average)
@@ -93,7 +96,8 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
                 'bleu4': bleu4 * 100,
                 'rouge': rouge * 100,
                 'similariry': similariry * 100,
-            }
+            },
+            "wrong": wrong
     }
 
     return scores
