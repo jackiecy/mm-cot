@@ -34,6 +34,10 @@ def load_data_std(args):
 
 def load_data_img(args):
     problems = json.load(open(os.path.join(args.data_root, 'scienceqa/problems.json')))
+    problems_train = json.load(open(os.path.join(args.data_root, 'scienceqa/problems_train_all_3st_tongyi_0104.json')))
+    # args.problems_train = 'scienceqa/problems.json'
+    # args.problems_train = 'scienceqa/problems_train_all_3st_tongyi_all.json'
+    args.problems_train = 'scienceqa/problems_train_all_3st_tongyi_0104.json' if args.dataset == "QG" else 'scienceqa/problems.json'
     pid_splits = json.load(open(os.path.join(args.data_root, 'scienceqa/pid_splits.json')))
     captions = json.load(open(args.caption_file))["captions"]
     name_maps = json.load(open('data/name_map.json'))
@@ -58,6 +62,7 @@ def load_data_img(args):
     for qid in problems:
         problems[qid]['caption'] = captions[qid] if qid in captions else ""
 
+    # train_qids = list(problems_train.keys())
     train_qids = pid_splits['%s' % (args.train_split)]
     val_qids = pid_splits['%s' % (args.val_split)]
     test_qids = pid_splits['%s' % (args.test_split)]
@@ -66,7 +71,7 @@ def load_data_img(args):
     print(f"number of test problems: {len(test_qids)}\n")
 
     qids = {'train': train_qids, 'val':val_qids,'test':test_qids}
-    return problems, qids, name_maps, image_features
+    return (problems_train if args.dataset == "QG" else problems), qids, name_maps, image_features, (problems_train if args.dataset == "QG" else problems)
 
 class ScienceQADatasetStd(Dataset):
     """

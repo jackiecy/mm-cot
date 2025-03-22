@@ -18,23 +18,26 @@ def get_acc_with_contion(res_pd, key, values):
     else:
         total_pd = res_pd[res_pd[key] == values]
     correct_pd = total_pd[total_pd['true_false'] == True]
-    acc = "{:.2f}".format(len(correct_pd) / len(total_pd) * 100)
+    acc = ("{:.2f}".format(len(correct_pd) / len(total_pd) * 100)) if len(total_pd) > 0 else (key + " " + str(values) + " is None")
+    # print(values, ":", len(correct_pd), "/", len(total_pd)
     return acc
 
 
-def get_scores(result_data, rationale_data, results_reference, data_file):
+def get_scores(result_data, rationale_data, results_reference, data_file, args):
     # read result file
     results = result_data
     num = len(results)
     # assert num == 4241
     #print("number of questions:", num)
-
+    pid_splits = json.load(open(os.path.join(args.data_root, 'scienceqa/pid_splits.json')))
     # read data file
     sqa_data = json.load(open(data_file))
 
+    is_rationale = not rationale_data[next(iter(rationale_data))].startswith("The answer is")
     # construct pandas data
     sqa_pd = pd.DataFrame(sqa_data).T
-    res_pd = sqa_pd[sqa_pd['split'] == 'test']  # test set
+    res_pd = sqa_pd[sqa_pd.index.isin(pid_splits[args.test_split])]  # test set
+    # res_pd = sqa_pd[sqa_pd['split'] == 'test']  # test set
     wrong = {}
     # update data
     for index, row in res_pd.iterrows():
@@ -48,7 +51,7 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
         pred = int(results[index])
         res_pd.loc[index, 'pred'] = pred
         res_pd.loc[index, 'true_false'] = (label == pred)
-        if label != pred:
+        if not is_rationale and label != pred:
             wrong[str(index)] = row['question'][:100]
             # print("wrong answer:", index, row['question'], label, pred, True if row['image'] else False)
     # print(wrong)
@@ -67,7 +70,7 @@ def get_scores(result_data, rationale_data, results_reference, data_file):
     rouge = caculate_rouge(rationale_data, results_reference)
 
     ## Similarity
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').cuda()
+    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', local_files_only=True).cuda()
     similariry = caculate_similariry(rationale_data, results_reference, model)
 
     scores = {

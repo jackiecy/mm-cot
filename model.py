@@ -22,17 +22,37 @@ from transformers.utils.model_parallel_utils import assert_device_map, get_devic
 from torch.utils.checkpoint import checkpoint
 
 class JointEncoder(T5Stack):
-    def __init__(self, config, embed_tokens=None, patch_size=None):
+    def __init__(self, config, embed_tokens=None, patch_size=None, input_len=None):
         super().__init__(config)
+        self.args = config.args
 
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
-
+        # (145, 1024)
         self.patch_num, self.patch_dim = patch_size
+        # 1024 -> 768
         self.image_dense = nn.Linear(self.patch_dim, config.d_model)
+        # 512
+        self.input_len = input_len
+        # 145 -> 512
+        # self.patch_dense = nn.Linear(self.patch_num, self.input_len)
+        # 1536 -> 768
+        # self.proj = nn.Linear(config.hidden_size *2, config.hidden_size)
+        # self.gelu = nn.GELU()
+        
+        if self.args["fusion_type"] == "HMF":
+            # HMF
+            self.mha_layer0 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+            self.mha_layer1 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+            self.mha_layer2 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+
+            self.mha_layer01 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+        elif self.args["fusion_type"] == "STLA":
+            self.mha_layer1 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+            self.mha_layer2 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+
         self.mha_layer = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
-        # self.mha_layer1 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
-        # self.mha_layer2 = torch.nn.MultiheadAttention(embed_dim=config.hidden_size, kdim=config.hidden_size, vdim=config.hidden_size, num_heads=1, batch_first=True)
+
         self.gate_dense = nn.Linear(2*config.hidden_size, config.hidden_size)
         self.sigmoid = nn.Sigmoid()
 
@@ -287,13 +307,39 @@ class JointEncoder(T5Stack):
         # Add last layer
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
-        
+
         image_embedding = self.image_dense(image_ids)
 
-        # text_att, _ = self.mha_layer(hidden_states, hidden_states, hidden_states)
-        image_att, _ = self.mha_layer(hidden_states, image_embedding, image_embedding)
-        # image_att, _ = self.mha_layer2(image_att, image_embedding, image_embedding)
+        if self.args["user_msg"] == 'answer':
+            image_att, _ = self.mha_layer(hidden_states, image_embedding, image_embedding)
+        else:
+            if self.args["fusion_type"] == "HMF":
+                # HMF
+                image_att0, _ = self.mha_layer0(hidden_states, image_embedding, image_embedding)
+                image_att1, _ = self.mha_layer1(hidden_states, image_embedding, image_embedding)
+                image_att2, _ = self.mha_layer2(hidden_states, image_embedding, image_embedding)
 
+                image_att01, _ = self.mha_layer01(image_att0, image_att1, image_att1)
+                image_att, _ = self.mha_layer(image_att01, image_att2, image_att2)
+            elif self.args["fusion_type"] == "STLA":
+                text_att, _ = self.mha_layer(hidden_states, hidden_states, hidden_states)
+                image_att, _ = self.mha_layer1(text_att, image_embedding, image_embedding)
+                image_att, _ = self.mha_layer2(image_att, image_embedding, image_embedding)
+            elif self.args["fusion_type"] == "RAW":
+                image_att, _ = self.mha_layer(hidden_states, image_embedding, image_embedding)
+
+        
+        # if torch.nonzero(torch.isnan(image_att)).numel() > 0:
+        #     print(5, image_att)
+        # MLA
+        # image_att, _ = self.mha_layer1(hidden_states, image_embedding, image_embedding)
+        # text_att, _ = self.mha_layer(hidden_states, hidden_states, hidden_states)
+
+        # image_att, _ = self.mha_layer(hidden_states, image_embedding, image_embedding)
+        # image_att, _ = self.mha_layer2(image_att, image_embedding, image_embedding)
+        if torch.nonzero(torch.isnan(image_att)).numel() > 0:
+            print(5, image_att)
+        # 门控
         merge = torch.cat([hidden_states, image_att], dim=-1)
         gate = self.sigmoid(self.gate_dense(merge))
         hidden_states = (1 - gate) * hidden_states + gate * image_att
@@ -329,7 +375,7 @@ class T5ForMultimodalGeneration(T5ForConditionalGeneration):
         r"decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight",
     ]
 
-    def __init__(self, config: T5Config, patch_size):
+    def __init__(self, config: T5Config, patch_size, input_len, args):
         super().__init__(config)
         self.model_dim = config.d_model
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
@@ -338,8 +384,15 @@ class T5ForMultimodalGeneration(T5ForConditionalGeneration):
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
+        encoder_config.args = args
         # self.encoder = T5Stack(encoder_config, self.shared)
-        self.encoder = JointEncoder(encoder_config, self.shared, patch_size)
+        self.encoder = JointEncoder(encoder_config, self.shared, patch_size, input_len)
+        # self.patch_num, self.patch_dim = patch_size
+        # self.image_dense = nn.Linear(self.patch_dim, encoder_config.d_model)
+        # self.mha_layer = torch.nn.MultiheadAttention(embed_dim=encoder_config.hidden_size, kdim=encoder_config.hidden_size, vdim=encoder_config.hidden_size, num_heads=1, batch_first=True)
+        # self.gate_dense = nn.Linear(2*encoder_config.hidden_size, encoder_config.hidden_size)
+        # self.encoder.gate_dense, self.encoder.image_dense, self.encoder.mha_layer = self.gate_dense, self.image_dense, self.mha_layer
+        
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
         decoder_config.is_encoder_decoder = False
